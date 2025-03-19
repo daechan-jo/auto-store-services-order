@@ -9,7 +9,7 @@ import { RedisModule } from '@nestjs-modules/ioredis';
 
 import { redisConfig } from './config/redis.config';
 import { TypeormConfig } from './config/typeorm.config';
-import {OrderService} from "./core/order.service";
+import { OrderService } from './core/order.service';
 
 @Module({
   imports: [
@@ -30,11 +30,9 @@ import {OrderService} from "./core/order.service";
   providers: [OrderService],
 })
 export class AppModule implements OnApplicationBootstrap {
-  constructor(
-  ) {}
+  constructor() {}
 
   async onApplicationBootstrap() {
-		setTimeout(async () => {
-		});
+    setTimeout(async () => {});
   }
 }
