@@ -30,9 +30,11 @@ import { OrderService } from './core/order.service';
   providers: [OrderService],
 })
 export class AppModule implements OnApplicationBootstrap {
-  constructor() {}
+  constructor(private readonly orderService: OrderService) {}
 
   async onApplicationBootstrap() {
-    setTimeout(async () => {});
+    setTimeout(async () => {
+      // await this.orderService.orderCron();
+    });
   }
 }

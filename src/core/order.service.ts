@@ -25,7 +25,7 @@ export class OrderService {
         cronId: cronId,
         type: CronType.ORDER,
         status: 'ACCEPT',
-        vendorId: this.configService.get<string>('L_COUPANG_VENDOR_ID')!,
+        vendorId: this.configService.get<string>('COUPANG_VENDOR_ID')!,
         today: today,
         yesterday: yesterday,
       },
