@@ -1,4 +1,4 @@
-import { CoupangOrder, CronType } from '@daechanjo/models';
+import { CoupangOrder, CoupangOrderInfo, CronType } from '@daechanjo/models';
 import { RabbitMQService } from '@daechanjo/rabbitmq';
 import { UtilService } from '@daechanjo/util';
 import { Injectable } from '@nestjs/common';
@@ -17,6 +17,8 @@ export class OrderService {
   async orderManagement(type: string, cronId: string) {
     const today = moment().format('YYYY-MM-DD');
     const yesterday = moment().subtract(1, 'days').format('YYYY-MM-DD');
+    // const twoDaysAgo = moment().subtract(2, 'days').format('YYYY-MM-DD');
+    // const threeDaysAgo = moment().subtract(3, 'days').format('YYYY-MM-DD');
 
     const newOrderProducts: CoupangOrder = await this.rabbitmqService.send(
       'coupang-queue',
@@ -24,6 +26,7 @@ export class OrderService {
       {
         cronId: cronId,
         type: CronType.ORDER,
+        // ACCEPT | INSTRUCT
         status: 'ACCEPT',
         vendorId: this.configService.get<string>('COUPANG_VENDOR_ID')!,
         today: today,
@@ -36,18 +39,47 @@ export class OrderService {
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // orderId 별로 개수를 카운트
+    const orderCounts = new Map<number, number>();
+    newOrderProducts.data.forEach((order: CoupangOrderInfo) => {
+      orderCounts.set(order.orderId, (orderCounts.get(order.orderId) || 0) + 1);
+    });
+
+    // 중복된 orderId를 가진 주문들 (개수가 2개 이상인 것들)
+    const duplicateOrders: CoupangOrderInfo[] = [];
+
+    // 데이터 분리
+    newOrderProducts.data.forEach((order: CoupangOrderInfo) => {
+      if (orderCounts.get(order.orderId)! > 1) {
+        duplicateOrders.push(order);
+      }
+    });
+
+    if (duplicateOrders.length >= 1) {
+      console.log(`${type}${cronId}: 총 ${duplicateOrders.length}개의 중복 주문이 있습니다.`);
+      // todo 메일 로직
+    }
+
+    const mergedOrders = this.mergeOrdersByIdAndReceiver(newOrderProducts.data);
+
+    // 묶음배송아이디
+    const shipmentBoxIds = newOrderProducts.data.map((item) => item.shipmentBoxId);
 
     // 새로운 모든 주문 상품준비중 처리
-    await this.rabbitmqService.emit('coupang-queue', 'orderStatusUpdate', {
+    await this.rabbitmqService.emit('coupang-queue', 'putOrderStatus', {
       cronId: cronId,
       type: CronType.ORDER,
+      shipmentBoxIds: shipmentBoxIds,
     });
+    // await this.rabbitmqService.emit('coupang-queue', 'orderStatusUpdate', {
+    //   cronId: cronId,
+    //   type: CronType.ORDER,
+    // });
 
     const result = await this.rabbitmqService.send('onch-queue', 'automaticOrdering', {
       cronId: cronId,
       store: this.configService.get<string>('STORE'),
-      newOrderProducts: newOrderProducts.data,
+      newOrderProducts: mergedOrders,
       type: CronType.ORDER,
     });
 
@@ -88,6 +120,25 @@ export class OrderService {
         );
       }
     }
+  }
+
+  mergeOrdersByIdAndReceiver(orders: CoupangOrderInfo[]): CoupangOrderInfo[] {
+    const mergedOrdersMap = new Map<string, CoupangOrderInfo>();
+
+    orders.forEach((order) => {
+      const receiverKey = `${order.receiver.name}_${order.receiver.addr1}_${order.receiver.addr2}_${order.receiver.postCode}`;
+      const key = `${order.orderId}_${receiverKey}`;
+
+      if (mergedOrdersMap.has(key)) {
+        const existingOrder = mergedOrdersMap.get(key)!;
+        // 배열을 any[]로 타입 단언
+        (existingOrder.orderItems as any[]).push(...order.orderItems);
+      } else {
+        mergedOrdersMap.set(key, { ...order });
+      }
+    });
+
+    return Array.from(mergedOrdersMap.values());
   }
 
   @Cron('0 */5 * * * *')
