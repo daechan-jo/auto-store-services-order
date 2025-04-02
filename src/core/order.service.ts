@@ -1,4 +1,4 @@
-import { CoupangOrder, CronType } from '@daechanjo/models';
+import { CoupangOrder, CronType, OrderStatus } from '@daechanjo/models';
 import { RabbitMQService } from '@daechanjo/rabbitmq';
 import { UtilService } from '@daechanjo/util';
 import { Injectable } from '@nestjs/common';
@@ -15,7 +15,7 @@ export class OrderService {
     private readonly utilService: UtilService,
   ) {}
 
-  // @Cron('0 */10 * * * *')
+  @Cron('0 */10 * * * *')
   async orderCron() {
     const cronId = this.utilService.generateCronId();
     try {
@@ -54,7 +54,7 @@ export class OrderService {
     try {
       // 1. 날짜 설정 및 신규 주문 데이터 가져오기
       const responseData = await this.fetchNewOrders(type, cronId);
-      const newOrders = JSONbig.parse(responseData);
+      const newOrders: CoupangOrder[] = JSONbig.parse(responseData);
 
       // 주문 데이터가 없으면 종료
       if (newOrders.length <= 0) {
@@ -63,11 +63,16 @@ export class OrderService {
       }
 
       // 3. 주문 병합 및 상태 업데이트
-      await this.updateOrderStatus(newOrders as any, cronId);
-      const mergedOrders = await this.mergeOrders(newOrders as any[]);
+      await this.updateOrderStatus(newOrders, cronId);
+      const mergedOrders = await this.mergeOrders(newOrders);
 
-      // 4. 자동 주문 처리
-      const result = await this.processAutomaticOrdering(mergedOrders, cronId);
+      // 4. 주문 처리
+      const result = await this.rabbitmqService.send('onch-queue', 'automaticOrdering', {
+        cronId: cronId,
+        type: CronType.ORDER,
+        store: this.configService.get<string>('STORE'),
+        orders: mergedOrders,
+      });
 
       // 5. 이메일 발송
       await this.sendOrderNotifications(result, type, cronId);
@@ -85,15 +90,13 @@ export class OrderService {
    * @private
    */
   private async fetchNewOrders(type: string, cronId: string): Promise<string> {
-    // const today = moment().format('YYYY-MM-DD');
-    // const yesterday = moment().subtract(1, 'days').format('YYYY-MM-DD');
-
     const newOrderProducts: { status: string; data: string } = await this.rabbitmqService.send(
       'coupang-queue',
       'newGetCoupangOrderList',
       {
         cronId: cronId,
         type: type,
+        status: OrderStatus.ACCEPT,
       },
     );
 
@@ -185,23 +188,6 @@ export class OrderService {
       cronId: cronId,
       type: CronType.ORDER,
       shipmentBoxIds: shipmentBoxIds,
-    });
-  }
-
-  /**
-   * 온채널 주문 처리를 진행합니다
-   *
-   * @param {any[]} orders - 병합된 주문 데이터
-   * @param {string} cronId - 크론 작업 식별자
-   * @returns {Promise<{data: any[]}>} 자동 주문 처리 결과
-   * @private
-   */
-  private async processAutomaticOrdering(orders: any[], cronId: string): Promise<{ data: any[] }> {
-    return await this.rabbitmqService.send('onch-queue', 'automaticOrdering', {
-      cronId: cronId,
-      type: CronType.ORDER,
-      store: this.configService.get<string>('STORE'),
-      orders: orders,
     });
   }
 
