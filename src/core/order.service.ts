@@ -1,4 +1,4 @@
-import { CoupangOrder, CronType, OrderStatus } from '@daechanjo/models';
+import { CoupangOrder, JobType, OrderStatus } from '@daechanjo/models';
 import { RabbitMQService } from '@daechanjo/rabbitmq';
 import { UtilService } from '@daechanjo/util';
 import { Injectable } from '@nestjs/common';
@@ -17,19 +17,19 @@ export class OrderService {
 
   @Cron('0 */10 * * * *')
   async orderCron() {
-    const cronId = this.utilService.generateCronId();
+    const jobId = this.utilService.generateCronId();
     try {
       const nowTime = moment().format('HH:mm:ss');
-      console.log(`${CronType.ORDER}${cronId}-${nowTime}: 자동 발주 시작`);
+      console.log(`${JobType.ORDER}${jobId}-${nowTime}: 자동 발주 시작`);
 
-      await this.orderManagement(CronType.ORDER, cronId);
+      await this.orderManagement(JobType.ORDER, jobId);
     } catch (error: any) {
-      console.error(`${CronType.ERROR}${CronType.ORDER}${cronId}: `, error);
+      console.error(`${JobType.ERROR}${JobType.ORDER}${jobId}: `, error);
 
       await this.rabbitmqService.emit('mail-queue', 'sendErrorMail', {
-        cronType: CronType.ORDER,
+        jobType: JobType.ORDER,
         store: this.configService.get<string>('STORE'),
-        cronId: cronId,
+        jobId: jobId,
         message: error.message,
       });
     }
@@ -46,57 +46,57 @@ export class OrderService {
    * 4. 자동 주문 처리를 진행합니다
    * 5. 성공 및 실패한 주문에 대해 이메일을 발송합니다
    *
-   * @param {string} type - 크론 작업 유형
-   * @param {string} cronId - 크론 작업 식별자
+   * @param {string} jobType - 크론 작업 유형
+   * @param {string} jobId - 크론 작업 식별자
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    */
-  async orderManagement(type: string, cronId: string): Promise<void> {
+  async orderManagement(jobType: string, jobId: string): Promise<void> {
     try {
       // 1. 날짜 설정 및 신규 주문 데이터 가져오기
-      const responseData = await this.fetchNewOrders(type, cronId);
+      const responseData = await this.fetchNewOrders(jobType, jobId);
       const newOrders: CoupangOrder[] = JSONbig.parse(responseData);
 
       // 주문 데이터가 없으면 종료
       if (newOrders.length <= 0) {
-        console.log(`${type}${cronId}: 주문 데이터가 없습니다.`);
+        console.log(`${jobType}${jobId}: 주문 데이터가 없습니다.`);
         return;
       }
 
       // 3. 주문 병합 및 상태 업데이트
-      await this.updateOrderStatus(newOrders, cronId);
+      await this.updateOrderStatus(newOrders, jobId);
       const mergedOrders = await this.mergeOrders(newOrders);
 
       // 4. 주문 처리
       const result = await this.rabbitmqService.send('onch-queue', 'automaticOrdering', {
-        cronId: cronId,
-        type: CronType.ORDER,
+        jobId: jobId,
+        jobType: JobType.ORDER,
         store: this.configService.get<string>('STORE'),
-        orders: mergedOrders,
+        data: mergedOrders,
       });
 
       // 5. 이메일 발송
-      await this.sendOrderNotifications(result, type, cronId);
+      await this.sendOrderNotifications(result, jobType, jobId);
     } catch (error: any) {
-      console.error(`${CronType.ERROR}${type}${cronId}: 주문 관리 중 오류 발생\n`, error);
+      console.error(`${JobType.ERROR}${jobType}${jobId}: 주문 관리 중 오류 발생\n`, error);
     }
   }
 
   /**
    * 쿠팡에서 신규 주문 데이터를 가져옵니다
    *
-   * @param {string} type - 크론 작업 유형
-   * @param {string} cronId - 크론 작업 식별자
+   * @param {string} jobType - 크론 작업 유형
+   * @param {string} jobId - 크론 작업 식별자
    * @returns {Promise<string>} 가져온 주문 데이터
    * @private
    */
-  private async fetchNewOrders(type: string, cronId: string): Promise<string> {
+  private async fetchNewOrders(jobType: string, jobId: string): Promise<string> {
     const newOrderProducts: { status: string; data: string } = await this.rabbitmqService.send(
       'coupang-queue',
       'newGetCoupangOrderList',
       {
-        cronId: cronId,
-        type: type,
-        status: OrderStatus.ACCEPT,
+        jobId: jobId,
+        jobType: jobType,
+        data: OrderStatus.ACCEPT,
       },
     );
 
@@ -175,19 +175,19 @@ export class OrderService {
    * 주문 상태를 업데이트합니다
    *
    * @param {CoupangScrapOrderItem[]} orders - 주문 데이터 배열
-   * @param {string} cronId - 크론 작업 식별자
+   * @param {string} jobId - 크론 작업 식별자
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    * @private
    */
-  private async updateOrderStatus(orders: CoupangOrder[], cronId: string): Promise<void> {
+  private async updateOrderStatus(orders: CoupangOrder[], jobId: string): Promise<void> {
     // 묶음배송아이디 추출
     const shipmentBoxIds = orders.map((item) => item.shipmentBoxId);
 
     // 모든 주문 상품준비중 처리
     await this.rabbitmqService.emit('coupang-queue', 'putOrderStatus', {
-      cronId: cronId,
-      type: CronType.ORDER,
-      shipmentBoxIds: shipmentBoxIds,
+      jobId: jobId,
+      jobType: JobType.ORDER,
+      data: shipmentBoxIds,
     });
   }
 
@@ -195,15 +195,15 @@ export class OrderService {
    * 주문 알림 이메일을 발송합니다
    *
    * @param {{data: any[]}} result - 자동 주문 처리 결과
-   * @param {string} type - 크론 작업 유형
-   * @param {string} cronId - 크론 작업 식별자
+   * @param {string} jobType - 크론 작업 유형
+   * @param {string} jobId - 크론 작업 식별자
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    * @private
    */
   private async sendOrderNotifications(
     result: { data: any[] },
-    type: string,
-    cronId: string,
+    jobType: string,
+    jobId: string,
   ): Promise<void> {
     const successOrders = result.data.filter((result: any) => result.status === 'success');
     const failedOrders = result.data.filter((result: any) => result.status === 'failed');
@@ -212,8 +212,8 @@ export class OrderService {
     if (successOrders.length > 0) {
       await this.sendEmailNotification({
         orders: successOrders,
-        type,
-        cronId,
+        jobType,
+        jobId,
         isSuccess: true,
       });
     }
@@ -222,10 +222,10 @@ export class OrderService {
     if (failedOrders.length > 0) {
       await this.sendEmailNotification({
         orders: failedOrders,
-        type,
-        cronId,
+        jobType,
+        jobId,
         isSuccess: false,
-        includeCronId: true,
+        includejobId: true,
       });
     }
   }
@@ -235,25 +235,25 @@ export class OrderService {
    *
    * @param {Object} options - 이메일 발송 옵션
    * @param {any[]} options.orders - 주문 데이터
-   * @param {string} options.type - 크론 작업 유형
-   * @param {string} options.cronId - 크론 작업 식별자
+   * @param {string} options.jobType - 크론 작업 유형
+   * @param {string} options.jobId - 크론 작업 식별자
    * @param {boolean} options.isSuccess - 성공 여부
-   * @param {boolean} [options.includeCronId=false] - cronId 포함 여부
+   * @param {boolean} [options.includejobId=false] - jobId 포함 여부
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    * @private
    */
   private async sendEmailNotification({
     orders,
-    type,
-    cronId,
+    jobType,
+    jobId,
     isSuccess,
-    includeCronId = false,
+    includejobId = false,
   }: {
     orders: any[];
-    type: string;
-    cronId: string;
+    jobType: string;
+    jobId: string;
     isSuccess: boolean;
-    includeCronId?: boolean;
+    includejobId?: boolean;
   }): Promise<void> {
     try {
       const emailType = isSuccess ? 'sendSuccessOrders' : 'sendFailedOrders';
@@ -264,19 +264,19 @@ export class OrderService {
         store: this.configService.get<string>('STORE'),
       };
 
-      // 실패 이메일에만 cronId 포함
-      if (includeCronId) {
-        emailData.cronId = cronId;
+      // 실패 이메일에만 jobId 포함
+      if (includejobId) {
+        emailData.jobId = jobId;
       }
 
       setImmediate(async () => {
         await this.rabbitmqService.emit('mail-queue', emailType, emailData);
       });
 
-      console.log(`${type}${cronId}: ${statusText} 이메일 전송 완료`);
+      console.log(`${jobType}${jobId}: ${statusText} 이메일 전송 완료`);
     } catch (error: any) {
       console.error(
-        `${CronType.ERROR}${type}${cronId}: ${isSuccess ? '성공' : '실패'} 이메일 전송 실패\n`,
+        `${JobType.ERROR}${jobType}${jobId}: ${isSuccess ? '성공' : '실패'} 이메일 전송 실패\n`,
         error.response?.data || error.message,
       );
     }

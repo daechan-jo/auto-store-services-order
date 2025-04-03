@@ -1,4 +1,4 @@
-import { CronType } from '@daechanjo/models';
+import { JobType, RabbitmqMessage } from '@daechanjo/models';
 import { Controller } from '@nestjs/common';
 import { MessagePattern } from '@nestjs/microservices';
 
@@ -9,13 +9,13 @@ export class OrderController {
   constructor(private readonly orderService: OrderService) {}
 
   @MessagePattern('order-queue')
-  async handlePriceMessage(message: any) {
+  async handlePriceMessage(message: RabbitmqMessage) {
     const { pattern, payload } = message;
-    console.log(`${payload.type}${payload.cronId}: 📥${pattern}`);
+    console.log(`${payload.jobType}${payload.jobId}: 📥${pattern}`);
     switch (pattern) {
       default:
         console.error(
-          `${CronType.ERROR}${payload.type}${payload.cronId}: 📥알 수 없는 패턴 유형 ${pattern}`,
+          `${JobType.ERROR}${payload.jobType}${payload.jobId}: 📥알 수 없는 패턴 유형 ${pattern}`,
         );
         return { status: 'error', message: `알 수 없는 패턴 유형: ${pattern}` };
     }
