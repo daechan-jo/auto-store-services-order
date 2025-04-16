@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/daechan-jo/auto-store-services-order/compare/v1.0.3...v1.1.0) (2025-04-16)
+
+
+### Features
+
+* add AppConfig singleton and update order service for improved error handling ([f6fc40d](https://github.com/daechan-jo/auto-store-services-order/commit/f6fc40db53255fec5ab5e8723d501cff4db1f3f1))
+
 ## [1.0.3](https://github.com/daechan-jo/auto-store-services-order/compare/v1.0.2...v1.0.3) (2025-04-03)
 
 ## [1.0.2](https://github.com/daechan-jo/auto-store-services-order/compare/v1.0.1...v1.0.2) (2025-04-02)
