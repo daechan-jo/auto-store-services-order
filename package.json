@@ -19,8 +19,8 @@
 		"test:e2e": "jest --config ./test/jest-e2e.json"
 	},
 	"dependencies": {
-		"@daechanjo/log": "^1.0.0",
-		"@daechanjo/models": "^1.0.47",
+		"@daechanjo/log": "^1.0.5",
+		"@daechanjo/models": "^1.0.70",
 		"@daechanjo/playwright": "^1.2.2",
 		"@daechanjo/rabbitmq": "^1.0.0",
 		"@daechanjo/util": "^1.0.0",

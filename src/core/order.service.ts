@@ -1,4 +1,4 @@
-import { CoupangOrder, JobType, OrderStatus } from '@daechanjo/models';
+import { CoupangOrder, JobType, OrderResult, OrderStatus } from '@daechanjo/models';
 import { RabbitMQService } from '@daechanjo/rabbitmq';
 import { UtilService } from '@daechanjo/util';
 import { Injectable } from '@nestjs/common';
@@ -27,10 +27,10 @@ export class OrderService {
       console.error(`${JobType.ERROR}${JobType.ORDER}${jobId}: `, error);
 
       await this.rabbitmqService.emit('mail-queue', 'sendErrorMail', {
-        jobType: JobType.ORDER,
-        store: this.configService.get<string>('STORE'),
         jobId: jobId,
-        message: error.message,
+        jobType: JobType.ORDER,
+        jobName: 'Order-service',
+        data: { title: '자동 발주 크론 실패', message: error.message },
       });
     }
   }
@@ -67,15 +67,19 @@ export class OrderService {
       const mergedOrders = await this.mergeOrders(newOrders);
 
       // 4. 주문 처리
-      const result = await this.rabbitmqService.send('onch-queue', 'automaticOrdering', {
-        jobId: jobId,
-        jobType: JobType.ORDER,
-        store: this.configService.get<string>('STORE'),
-        data: mergedOrders,
-      });
+      const result: { status: string; data: OrderResult[] } = await this.rabbitmqService.send(
+        'onch-queue',
+        'automaticOrdering',
+        {
+          jobId: jobId,
+          jobType: JobType.ORDER,
+          store: this.configService.get<string>('STORE'),
+          data: mergedOrders,
+        },
+      );
 
       // 5. 이메일 발송
-      await this.sendOrderNotifications(result, jobType, jobId);
+      await this.sendOrderNotifications(result.data, jobType, jobId);
     } catch (error: any) {
       console.error(`${JobType.ERROR}${jobType}${jobId}: 주문 관리 중 오류 발생\n`, error);
     }
@@ -174,7 +178,7 @@ export class OrderService {
   /**
    * 주문 상태를 업데이트합니다
    *
-   * @param {CoupangScrapOrderItem[]} orders - 주문 데이터 배열
+   * @param {CoupangOrder[]} orders - 주문 데이터 배열
    * @param {string} jobId - 크론 작업 식별자
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    * @private
@@ -194,19 +198,19 @@ export class OrderService {
   /**
    * 주문 알림 이메일을 발송합니다
    *
-   * @param {{data: any[]}} result - 자동 주문 처리 결과
+   * @param { data: OrderResult[]} data - 자동 주문 처리 결과
    * @param {string} jobType - 크론 작업 유형
    * @param {string} jobId - 크론 작업 식별자
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    * @private
    */
   private async sendOrderNotifications(
-    result: { data: any[] },
+    data: OrderResult[],
     jobType: string,
     jobId: string,
   ): Promise<void> {
-    const successOrders = result.data.filter((result: any) => result.status === 'success');
-    const failedOrders = result.data.filter((result: any) => result.status === 'failed');
+    const successOrders = data.filter((result: any) => result.status === 'success');
+    const failedOrders = data.filter((result: any) => result.status === 'failed');
 
     // 성공 주문 이메일 발송
     if (successOrders.length > 0) {
@@ -225,7 +229,6 @@ export class OrderService {
         jobType,
         jobId,
         isSuccess: false,
-        includejobId: true,
       });
     }
   }
@@ -238,7 +241,6 @@ export class OrderService {
    * @param {string} options.jobType - 크론 작업 유형
    * @param {string} options.jobId - 크론 작업 식별자
    * @param {boolean} options.isSuccess - 성공 여부
-   * @param {boolean} [options.includejobId=false] - jobId 포함 여부
    * @returns {Promise<void>} 작업 완료 시 Promise 반환
    * @private
    */
@@ -247,27 +249,22 @@ export class OrderService {
     jobType,
     jobId,
     isSuccess,
-    includejobId = false,
   }: {
     orders: any[];
     jobType: string;
     jobId: string;
     isSuccess: boolean;
-    includejobId?: boolean;
   }): Promise<void> {
     try {
       const emailType = isSuccess ? 'sendSuccessOrders' : 'sendFailedOrders';
       const statusText = isSuccess ? '성공' : '실패';
 
       const emailData: any = {
-        result: orders,
-        store: this.configService.get<string>('STORE'),
+        jobId: jobId,
+        jobType: jobType,
+        jobName: 'Order-service',
+        data: orders,
       };
-
-      // 실패 이메일에만 jobId 포함
-      if (includejobId) {
-        emailData.jobId = jobId;
-      }
 
       setImmediate(async () => {
         await this.rabbitmqService.emit('mail-queue', emailType, emailData);
